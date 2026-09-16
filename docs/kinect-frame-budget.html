@@ -1,0 +1,1018 @@
+<title>Kinect Frame Budget</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+
+<style>
+  :root {
+    --ground:      #EDF0EF;
+    --surface:     #FFFFFF;
+    --instrument:  #10161B;
+    --ink:         #16201F;
+    --ink-soft:    #4C5A59;
+    --ink-faint:   #7D8A89;
+    --rule:        #D3DAD8;
+    --rule-soft:   #E2E7E5;
+    --accent:      #0E8F62;
+    --accent-soft: #D6EDE3;
+    --hot:         #B8412A;
+    --hot-soft:    #F6DED8;
+    --slate:       #78878F;
+    --on-dark:     #E6EDEB;
+    --on-dark-soft:#93A4A3;
+
+    --step--1: 0.8125rem;
+    --step-0:  1.0625rem;
+    --step-1:  1.3125rem;
+    --step-2:  1.75rem;
+    --step-3:  2.375rem;
+    --step-4:  3.25rem;
+
+    color-scheme: light;
+  }
+
+  :root:not([data-theme="light"]) { }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0A0F13;
+      --surface:     #121A1F;
+      --instrument:  #060A0D;
+      --ink:         #E4ECEA;
+      --ink-soft:    #9FB0AE;
+      --ink-faint:   #6E807E;
+      --rule:        #233035;
+      --rule-soft:   #1A242A;
+      --accent:      #35D39A;
+      --accent-soft: #113028;
+      --hot:         #F07357;
+      --hot-soft:    #331712;
+      --slate:       #5D6E77;
+      --on-dark:     #E4ECEA;
+      --on-dark-soft:#8FA1A0;
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #0A0F13;
+    --surface:     #121A1F;
+    --instrument:  #060A0D;
+    --ink:         #E4ECEA;
+    --ink-soft:    #9FB0AE;
+    --ink-faint:   #6E807E;
+    --rule:        #233035;
+    --rule-soft:   #1A242A;
+    --accent:      #35D39A;
+    --accent-soft: #113028;
+    --hot:         #F07357;
+    --hot-soft:    #331712;
+    --slate:       #5D6E77;
+    --on-dark:     #E4ECEA;
+    --on-dark-soft:#8FA1A0;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: var(--step-0);
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1080px;
+    margin-inline: auto;
+    padding-inline: 20px;
+    padding-block: 0 96px;
+  }
+
+  .prose { max-width: 68ch; }
+
+  h1, h2, h3 {
+    font-family: Archivo, "IBM Plex Sans", sans-serif;
+    text-wrap: balance;
+    line-height: 1.12;
+    letter-spacing: -0.015em;
+    margin: 0;
+  }
+
+  h1 { font-size: var(--step-4); font-weight: 700; letter-spacing: -0.03em; }
+  h2 { font-size: var(--step-2); font-weight: 600; }
+  h3 { font-size: var(--step-1); font-weight: 600; letter-spacing: -0.005em; }
+
+  p { margin: 0; }
+  a { color: var(--accent); }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  code, .mono {
+    font-family: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  code {
+    font-size: 0.88em;
+    background: var(--rule-soft);
+    padding: 0.1em 0.36em;
+    border-radius: 3px;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  header.masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+    padding-block: 72px 44px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .masthead .lede {
+    max-width: 62ch;
+    font-size: var(--step-1);
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+
+  .masthead .lede strong { color: var(--ink); font-weight: 600; }
+
+  .byline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 22px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    color: var(--ink-faint);
+  }
+
+  /* ------------------------------------------------------ budget chart */
+
+  .budget {
+    display: flex;
+    flex-direction: column;
+    gap: 34px;
+    margin-block: 52px 0;
+  }
+
+  .budget-row { display: flex; flex-direction: column; gap: 10px; }
+
+  .budget-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .budget-label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  .budget-total {
+    font-family: Archivo, sans-serif;
+    font-size: var(--step-2);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  .budget-total .unit { font-size: 0.55em; font-weight: 500; color: var(--ink-faint); margin-left: 2px; }
+  .budget-total .fps  { font-size: 0.55em; font-weight: 500; color: var(--ink-soft); margin-left: 10px; }
+
+  .bar {
+    display: flex;
+    width: 100%;
+    height: 44px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: var(--rule-soft);
+  }
+
+  .bar span {
+    display: block;
+    height: 100%;
+    border-right: 1px solid var(--ground);
+  }
+  .bar span:last-child { border-right: 0; }
+
+  .seg-odo   { background: var(--slate); }
+  .seg-vox   { background: color-mix(in oklab, var(--slate) 66%, var(--ground)); }
+  .seg-tsdf  { background: color-mix(in oklab, var(--slate) 44%, var(--ground)); }
+  .seg-pcd   { background: color-mix(in oklab, var(--slate) 26%, var(--ground)); }
+  .seg-misc  { background: color-mix(in oklab, var(--slate) 14%, var(--ground)); }
+
+  .bar.after span { border-right-color: var(--ground); }
+  .aft-odo   { background: var(--accent); }
+  .aft-prep  { background: color-mix(in oklab, var(--accent) 62%, var(--ground)); }
+  .aft-map   { background: color-mix(in oklab, var(--accent) 40%, var(--ground)); }
+  .aft-tsdf  { background: color-mix(in oklab, var(--accent) 24%, var(--ground)); }
+  .aft-rest  { background: color-mix(in oklab, var(--accent) 12%, var(--ground)); }
+
+  .scale-note {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    color: var(--ink-faint);
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 20px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    color: var(--ink-soft);
+  }
+
+  .legend i {
+    display: inline-block;
+    width: 9px; height: 9px;
+    margin-right: 7px;
+    vertical-align: 1px;
+    border-radius: 1px;
+  }
+
+  /* ---------------------------------------------------------- sections */
+
+  section { padding-block: 60px 0; }
+
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    padding-bottom: 22px;
+    margin-bottom: 30px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .sec-num {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    flex: none;
+  }
+
+  .stack { display: flex; flex-direction: column; gap: 20px; }
+  .stack-tight { display: flex; flex-direction: column; gap: 12px; }
+
+  /* ------------------------------------------------- instrument panels */
+
+  .panel {
+    background: var(--instrument);
+    color: var(--on-dark);
+    border-radius: 4px;
+    padding: 26px 24px;
+    margin-block: 32px;
+    overflow-x: auto;
+  }
+
+  .panel .eyebrow { color: var(--on-dark-soft); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  caption {
+    text-align: left;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--on-dark-soft);
+    padding-bottom: 16px;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 9px 16px 9px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.09);
+    white-space: nowrap;
+  }
+
+  th {
+    font-weight: 600;
+    color: var(--on-dark-soft);
+    font-size: 0.82rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  td.num { text-align: right; padding-right: 22px; }
+  tr:last-child td { border-bottom: 0; }
+
+  tr.total td {
+    border-top: 1px solid rgba(255,255,255,0.28);
+    border-bottom: 0;
+    padding-top: 13px;
+    font-weight: 600;
+  }
+
+  .was { color: var(--on-dark-soft); text-decoration: line-through; text-decoration-thickness: 1px; }
+  .now { color: var(--accent); font-weight: 600; }
+
+  /* light-panel variant for reference tables that read better on paper */
+  .panel.light {
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+  }
+  .panel.light caption, .panel.light th { color: var(--ink-faint); }
+  .panel.light th, .panel.light td { border-bottom-color: var(--rule-soft); }
+  .panel.light .eyebrow { color: var(--ink-faint); }
+
+  /* -------------------------------------------------- pipeline diagram */
+
+  .pipeline {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-block: 32px;
+  }
+
+  .stage {
+    background: var(--surface);
+    padding: 18px 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .stage .idx {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.75rem;
+    letter-spacing: 0.1em;
+    color: var(--ink-faint);
+  }
+
+  .stage h4 {
+    margin: 0;
+    font-family: Archivo, sans-serif;
+    font-size: 1.0rem;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+
+  .stage p {
+    font-size: 0.875rem;
+    line-height: 1.45;
+    color: var(--ink-soft);
+  }
+
+  .stage .verdict {
+    margin-top: auto;
+    padding-top: 10px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+  }
+
+  .stage.ok   .verdict { color: var(--accent); }
+  .stage.gap  .verdict { color: var(--hot); }
+
+  /* ------------------------------------------------------- change list */
+
+  .changes { display: flex; flex-direction: column; gap: 1px; background: var(--rule); border-block: 1px solid var(--rule); }
+
+  .change {
+    background: var(--ground);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 28px;
+    align-items: start;
+    padding: 20px 0;
+  }
+
+  .change > .body { display: flex; flex-direction: column; gap: 6px; }
+  .change h3 { font-size: 1.0625rem; }
+  .change p { font-size: 0.9375rem; color: var(--ink-soft); }
+
+  .delta {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.875rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 4px 10px;
+    border-radius: 3px;
+    align-self: start;
+  }
+
+  .delta.fix { color: var(--hot); background: var(--hot-soft); }
+
+  /* -------------------------------------------------------- callout */
+
+  .callout {
+    border-left: 3px solid var(--hot);
+    padding: 4px 0 4px 20px;
+    margin-block: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .callout .eyebrow { color: var(--hot); }
+
+  .formula {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.9375rem;
+    background: var(--rule-soft);
+    border-radius: 3px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  ul.notes { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 10px; }
+  ul.notes li { padding-left: 0.2em; }
+  ul.notes li::marker { color: var(--accent); }
+
+  footer {
+    margin-top: 76px;
+    padding-top: 26px;
+    border-top: 1px solid var(--rule);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    color: var(--ink-faint);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 24px;
+  }
+
+  @media (max-width: 620px) {
+    :root { --step-4: 2.375rem; --step-3: 1.875rem; --step-2: 1.5rem; }
+    .change { grid-template-columns: 1fr; }
+    th, td { white-space: normal; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">Performance teardown &middot; Enuma / Kinect</p>
+    <h1>Kinect Frame Budget</h1>
+    <p class="lede">
+      The scanner streams from a 30&nbsp;Hz sensor but was spending
+      <strong>1113&nbsp;ms per frame</strong> &mdash; 0.9&nbsp;FPS. Profiling found
+      89% of it inside a single Open3D call, and a second, quieter problem:
+      the WebSocket re-sent the <em>entire</em> map every frame, so cost grew with
+      scan length. Both are now fixed. The pose composition was also inverted,
+      which is the part that mattered most for the actual 3D output.
+    </p>
+    <p class="byline">
+      <span>Kinect v1 &middot; model 1414</span>
+      <span>libfreenect + Open3D 0.19</span>
+      <span>FastAPI &middot; React &middot; three.js</span>
+      <span>CPU only &mdash; no CUDA</span>
+    </p>
+
+    <div class="budget">
+      <div class="budget-row">
+        <div class="budget-head">
+          <span class="budget-label">Before &mdash; per frame</span>
+          <span class="budget-total">1113<span class="unit">ms</span><span class="fps">0.9 FPS</span></span>
+        </div>
+        <div class="bar" role="img" aria-label="Before: 990 ms odometry, 66 ms voxel downsampling, 23 ms TSDF integration, 14 ms point cloud build, 20 ms other, totalling 1113 ms.">
+          <span class="seg-odo"  style="width:88.9%"></span>
+          <span class="seg-vox"  style="width:5.9%"></span>
+          <span class="seg-tsdf" style="width:2.1%"></span>
+          <span class="seg-pcd"  style="width:1.3%"></span>
+          <span class="seg-misc" style="width:1.8%"></span>
+        </div>
+        <p class="legend">
+          <span><i class="seg-odo"></i>RGB-D odometry 990</span>
+          <span><i class="seg-vox"></i>voxel downsample 66</span>
+          <span><i class="seg-tsdf"></i>TSDF 23</span>
+          <span><i class="seg-pcd"></i>cloud build 14</span>
+          <span><i class="seg-misc"></i>other 20</span>
+        </p>
+      </div>
+
+      <div class="budget-row">
+        <div class="budget-head">
+          <span class="budget-label">After &mdash; same scale</span>
+          <span class="budget-total">49<span class="unit">ms</span><span class="fps">20.3 FPS</span></span>
+        </div>
+        <div class="bar" role="img" aria-label="After: 49 ms total, drawn at the same scale as the 1113 ms bar above — about 4 percent of its width.">
+          <span class="aft-odo"  style="width:2.25%"></span>
+          <span class="aft-prep" style="width:1.26%"></span>
+          <span class="aft-map"  style="width:0.45%"></span>
+          <span class="aft-tsdf" style="width:0.21%"></span>
+          <span class="aft-rest" style="width:0.24%"></span>
+        </div>
+        <p class="scale-note">&#8593; 22&times; faster. Expanded to its own scale:</p>
+        <div class="bar after" role="img" aria-label="After, expanded: 25 ms odometry, 14 ms frame preparation, 5 ms map merge, 2.3 ms amortised TSDF, 2.4 ms other.">
+          <span class="aft-odo"  style="width:51.0%"></span>
+          <span class="aft-prep" style="width:28.6%"></span>
+          <span class="aft-map"  style="width:10.2%"></span>
+          <span class="aft-tsdf" style="width:4.7%"></span>
+          <span class="aft-rest" style="width:5.5%"></span>
+        </div>
+        <p class="legend">
+          <span><i class="aft-odo"></i>odometry 25</span>
+          <span><i class="aft-prep"></i>frame prep 14</span>
+          <span><i class="aft-map"></i>map merge 5</span>
+          <span><i class="aft-tsdf"></i>TSDF (keyframe) 2.3</span>
+          <span><i class="aft-rest"></i>other 2.7</span>
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===================================================== 1 ========== -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">01</span>
+      <h2>How the sensor actually produces depth</h2>
+    </div>
+
+    <div class="prose stack">
+      <p>
+        The Kinect v1 is not a time-of-flight camera and not a stereo camera. It is a
+        <strong>structured-light</strong> sensor built on the PrimeSense PS1080. An 830&nbsp;nm laser
+        diode fires through a diffractive optical element that splits the beam into a fixed,
+        pseudo-random speckle pattern. An IR camera sitting 7.5&nbsp;cm to the side photographs
+        that pattern, correlates each local patch against a reference image memorised at a known
+        calibration distance, and reads off the horizontal shift. Shift is disparity; disparity
+        triangulates to range.
+      </p>
+      <p>
+        Three consequences fall straight out of that and every design decision downstream
+        answers to them.
+      </p>
+    </div>
+
+    <div class="prose stack" style="margin-top:24px">
+      <h3>Error grows with the square of distance</h3>
+      <p>
+        Disparity resolves to a fixed fraction of a pixel, but range is inversely proportional
+        to disparity, so the depth step widens quadratically. Inverting libfreenect's own
+        raw&ndash;to&ndash;metre fit gives the exact size of one 11-bit quantisation step:
+      </p>
+    </div>
+
+    <div class="formula">z(raw) = 1 / (3.3309495161 - 0.0030711016 &times; raw)     raw &isin; [0, 2046],  2047 = no reading</div>
+
+    <div class="panel light">
+      <table>
+        <caption>Depth quantisation, Kinect v1 &mdash; one raw unit</caption>
+        <thead>
+          <tr><th>Range</th><th class="num">Raw value</th><th class="num">Step size</th><th>Meaning for the map</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>0.8 m</td><td class="num">~700</td><td class="num">2.0 mm</td><td>finer than the 20 mm map voxel</td></tr>
+          <tr><td>1.0 m</td><td class="num">759</td><td class="num">3.1 mm</td><td>finer than the map voxel</td></tr>
+          <tr><td>2.0 m</td><td class="num">922</td><td class="num">12 mm</td><td>comparable to the map voxel</td></tr>
+          <tr><td>3.0 m</td><td class="num">976</td><td class="num">26 mm</td><td>coarser than the map voxel</td></tr>
+          <tr><td>3.5 m</td><td class="num">992</td><td class="num">38 mm</td><td>the configured cut-off</td></tr>
+          <tr><td>5.0 m</td><td class="num">1027</td><td class="num">76 mm</td><td>noise, not geometry</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose stack">
+      <p>
+        This is why <code>max_depth = 3.5</code> is the right call and why a single uniform voxel
+        size across the whole range is a compromise: near the sensor the voxel throws away real
+        precision, far from it the voxel is finer than the data justifies. Keeping the cut-off
+        where the step size crosses the voxel size is the honest place to draw the line.
+      </p>
+
+      <h3>The intrinsics are only correct because of the mode</h3>
+      <p>
+        The driver selects <code>freenect_find_depth_mode(MEDIUM, REGISTERED)</code>, which asks
+        the sensor to warp depth into the <em>RGB</em> camera's frame and hand it back in
+        millimetres. That is why <code>fx = fy = 525</code>, <code>cx = 320</code>,
+        <code>cy = 240</code> is right: those are the colour camera's parameters. Switching to
+        <code>FREENECT_DEPTH_MM</code> would silently invalidate them &mdash; unregistered depth
+        needs the IR camera's intrinsics instead (<code>fx &asymp; 594.2</code>), and using the
+        wrong set skews every reconstruction into a subtle shear that is very hard to spot by eye.
+      </p>
+
+      <h3>USB 2.0 is the hard ceiling</h3>
+      <p>
+        640&times;480 depth plus 640&times;480 Bayer colour at 30&nbsp;Hz consumes roughly half
+        of a USB 2.0 bus in isochronous transfers, which is why one sensor per host controller is
+        the practical limit and why the event pump has to be drained continuously. Whatever the
+        pipeline does per frame, <strong>33.3&nbsp;ms is the floor</strong>. Anything faster is
+        re-processing a frame the sensor has not refreshed.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===================================================== 2 ========== -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">02</span>
+      <h2>The canonical RGB-D scanner, and where this one sat</h2>
+    </div>
+
+    <div class="prose stack">
+      <p>
+        Every dense RGB-D reconstruction system since KinectFusion (Newcombe et al., 2011) is the
+        same five stages. What separates them is which stage they invest in: KinectFusion put
+        everything into frame-to-model tracking against a raycast TSDF; ElasticFusion swapped the
+        volume for deformable surfels to get loop closure; Open3D's own reconstruction system
+        cuts the sequence into fragments and runs multiway pose-graph optimisation over them.
+      </p>
+    </div>
+
+    <div class="pipeline">
+      <div class="stage ok">
+        <span class="idx">STAGE 1</span>
+        <h4>Acquire</h4>
+        <p>Isochronous USB pull at 30&nbsp;Hz, depth registered to colour.</p>
+        <span class="verdict">Solid</span>
+      </div>
+      <div class="stage gap">
+        <span class="idx">STAGE 2</span>
+        <h4>Precondition</h4>
+        <p>Bilateral filter, hole fill, normals, image pyramid.</p>
+        <span class="verdict">Not present</span>
+      </div>
+      <div class="stage gap">
+        <span class="idx">STAGE 3</span>
+        <h4>Track</h4>
+        <p>Hybrid photometric + geometric odometry, frame&nbsp;&rarr;&nbsp;frame.</p>
+        <span class="verdict">Frame-to-frame only</span>
+      </div>
+      <div class="stage ok">
+        <span class="idx">STAGE 4</span>
+        <h4>Fuse</h4>
+        <p>Voxel-hash point map for the live view, TSDF for the mesh.</p>
+        <span class="verdict">Two maps, both used</span>
+      </div>
+      <div class="stage ok">
+        <span class="idx">STAGE 5</span>
+        <h4>Present</h4>
+        <p>Marching cubes on demand; binary delta stream to WebGL.</p>
+        <span class="verdict">Solid</span>
+      </div>
+    </div>
+
+    <div class="prose stack">
+      <p>
+        The architectural finding is at stage 3. The app already builds a TSDF volume every
+        frame &mdash; and then never tracks against it. Frame-to-frame odometry accumulates drift
+        linearly with frame count and has no mechanism to ever recover it; frame-to-model
+        odometry registers each new frame against a raycast of the fused volume, which averages
+        out per-frame noise and holds the map rigid. The volume is already there. Using it for
+        tracking is the largest accuracy upgrade still available, and it costs no new data
+        structure.
+      </p>
+      <p>
+        Stage 2 being empty is the second gap. Raw Kinect depth has speckle holes at every
+        surface discontinuity and along every shadow cast by the 7.5&nbsp;cm baseline. Feeding
+        it to the odometry unfiltered means the solver spends iterations fitting noise.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===================================================== 3 ========== -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">03</span>
+      <h2>What the profiler found</h2>
+    </div>
+
+    <div class="prose">
+      <p>
+        Measured on the mock sensor so every stage sees identical input, 60 frames, warm.
+        The headline is the first row: Open3D's legacy <code>compute_rgbd_odometry</code> is a
+        single-threaded scalar implementation, and at full 640&times;480 with the default
+        <code>[20, 10, 5]</code> iteration schedule it alone ate 89% of the frame.
+      </p>
+    </div>
+
+    <div class="panel">
+      <table>
+        <caption>Per-frame cost by stage</caption>
+        <thead>
+          <tr><th>Stage</th><th class="num">Before</th><th class="num">After</th><th>What changed</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>RGB-D odometry</td>
+            <td class="num was">990 ms</td>
+            <td class="num now">25 ms</td>
+            <td>tensor API, half-res tracking</td>
+          </tr>
+          <tr>
+            <td>Frame voxel downsample</td>
+            <td class="num was">51 ms</td>
+            <td class="num now">&mdash;</td>
+            <td>folded into the map hash</td>
+          </tr>
+          <tr>
+            <td>Global map downsample</td>
+            <td class="num was">15 ms</td>
+            <td class="num now">5 ms</td>
+            <td>O(map) &rarr; O(new points)</td>
+          </tr>
+          <tr>
+            <td>TSDF integration</td>
+            <td class="num was">23 ms</td>
+            <td class="num now">2.3 ms</td>
+            <td>keyframe-gated, not every frame</td>
+          </tr>
+          <tr>
+            <td>Point cloud build</td>
+            <td class="num was">14 ms</td>
+            <td class="num now">2 ms</td>
+            <td>numpy unprojection, stride 2</td>
+          </tr>
+          <tr>
+            <td>Frame preparation</td>
+            <td class="num was">16 ms</td>
+            <td class="num now">14 ms</td>
+            <td>strided copies for the tracker</td>
+          </tr>
+          <tr>
+            <td>Serialise + send</td>
+            <td class="num was">4 ms</td>
+            <td class="num now">0.3 ms</td>
+            <td>delta only, not the whole map</td>
+          </tr>
+          <tr class="total">
+            <td>Per frame</td>
+            <td class="num was">1113 ms</td>
+            <td class="num now">49 ms</td>
+            <td>0.9 FPS &rarr; 20.3 FPS</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose stack">
+      <h3>The bandwidth problem was worse than the CPU one</h3>
+      <p>
+        Every frame packed the <em>whole</em> accumulated map into a binary buffer and pushed it
+        down the socket. The browser then walked it point by point through a
+        <code>DataView</code>, allocated two fresh <code>Float32Array</code>s, and set React
+        state &mdash; a full re-render and a full GPU re-upload, 20 times a second, over a buffer
+        that never stops growing.
+      </p>
+      <p>
+        At 90&nbsp;000 points that is 1.4&nbsp;MB per frame, 28&nbsp;MB/s sustained. A
+        two-minute room scan would have taken it well past what a browser tab survives. The cost
+        scaled with how long you had been scanning, which is the worst shape a hot loop can have.
+      </p>
+    </div>
+
+    <div class="panel">
+      <table>
+        <caption>Wire traffic, 80 frames of a room scan</caption>
+        <thead>
+          <tr><th>Metric</th><th class="num">Before</th><th class="num">After</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Per frame at 56k points</td><td class="num was">896 KB</td><td class="num now">11 KB</td></tr>
+          <tr><td>Growth with scan length</td><td class="num was">linear</td><td class="num now">flat</td></tr>
+          <tr><td>Browser work per frame</td><td class="num was">O(whole map)</td><td class="num now">O(new points)</td></tr>
+          <tr><td>React renders per second</td><td class="num was">~20</td><td class="num now">~7 (HUD only)</td></tr>
+          <tr class="total"><td>80-frame total</td><td class="num was">~54 MB</td><td class="num now">872 KB</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================================================== 4 ========== -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">04</span>
+      <h2>What changed</h2>
+    </div>
+
+    <div class="changes">
+      <div class="change">
+        <div class="body">
+          <h3>Odometry moved to the Open3D tensor API</h3>
+          <p>
+            <code>o3d.t.pipelines.odometry.rgbd_odometry_multi_scale</code> is the vectorised,
+            parallel implementation of the same hybrid objective. At full resolution it is
+            48&nbsp;ms against the legacy 990&nbsp;ms &mdash; identical transforms, 21&times; the
+            speed. Tracking now runs at 320&times;240, which is standard practice and costs
+            nothing in accuracy on a pyramid solver.
+          </p>
+        </div>
+        <span class="delta">990 &rarr; 25 ms</span>
+      </div>
+
+      <div class="change">
+        <div class="body">
+          <h3>A constant-velocity prior seeds each solve</h3>
+          <p>
+            The previous frame's accepted transform is handed to the solver as its initial guess
+            instead of the identity. Under real hand motion this is most of the answer already,
+            so the solver converges in fewer iterations and is far less likely to fall into a
+            local minimum during a fast pan.
+          </p>
+        </div>
+        <span class="delta">accuracy</span>
+      </div>
+
+      <div class="change">
+        <div class="body">
+          <h3>The global map became a sorted voxel-key index</h3>
+          <p>
+            World points quantise to a packed <code>int64</code> voxel key; a
+            <code>searchsorted</code> against the sorted key array says which are new, and only
+            those are stored. This replaces the per-frame <code>voxel_down_sample</code>
+            <em>and</em> the periodic re-downsample of the whole map, and it hands the streaming
+            layer its delta for free. Merging into a one-million-point map costs 3&nbsp;ms.
+          </p>
+        </div>
+        <span class="delta">66 &rarr; 5 ms</span>
+      </div>
+
+      <div class="change">
+        <div class="body">
+          <h3>TSDF integration is keyframe-gated</h3>
+          <p>
+            The volume is only integrated when the camera has moved 4&nbsp;cm or rotated
+            4&deg; since the last integration. A static camera used to hammer the same voxels
+            30 times a second, which burned 23&nbsp;ms a frame <em>and</em> over-weighted whatever
+            it happened to be pointing at.
+          </p>
+        </div>
+        <span class="delta">23 &rarr; 2.3 ms</span>
+      </div>
+
+      <div class="change">
+        <div class="body">
+          <h3>The stream sends deltas, the browser appends</h3>
+          <p>
+            An 8-byte header carries the point count and a mode flag &mdash; append, or replace
+            for a reconnecting client's full resync. The browser de-interleaves only the new
+            points into preallocated typed arrays and issues a partial GPU upload of the range it
+            just wrote, then advances <code>drawRange</code>. No reallocation, no full re-upload,
+            and the point data never touches React state.
+          </p>
+        </div>
+        <span class="delta">896 &rarr; 11 KB</span>
+      </div>
+
+      <div class="change">
+        <div class="body">
+          <h3>Duplicate frames are skipped</h3>
+          <p>
+            The driver now exposes a monotonic frame counter bumped by the depth callback, and
+            the stream loop refuses to re-run SLAM on a frame the sensor has not refreshed. At
+            the old 0.9&nbsp;FPS this could not happen; at 20&nbsp;FPS against a 30&nbsp;Hz
+            sensor it would have doubled TSDF weights on every stall.
+          </p>
+        </div>
+        <span class="delta">correctness</span>
+      </div>
+
+      <div class="change">
+        <div class="body">
+          <h3>Importing the server no longer opens the sensor</h3>
+          <p>
+            A module-level <code>app = get_default_app()</code> ran on any import, so the test
+            suite was opening the physical Kinect and flooding stderr with USB resync errors.
+            It is built lazily now; <code>uvicorn backend.server:app</code> still works.
+          </p>
+        </div>
+        <span class="delta fix">bug</span>
+      </div>
+
+      <div class="change">
+        <div class="body">
+          <h3>Tilt acknowledgements report reality</h3>
+          <p>
+            The motor clamps to &plusmn;27&deg;, but the acknowledgement echoed the
+            <em>requested</em> angle and put that integer in a field the UI read as a boolean. It
+            now returns the angle actually applied alongside the request.
+          </p>
+        </div>
+        <span class="delta fix">bug</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================== 5 ========== -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">05</span>
+      <h2>The bug that mattered most</h2>
+    </div>
+
+    <div class="prose stack">
+      <p>
+        Speed was the ask, but the reconstruction had a sign error in it, and no amount of
+        throughput fixes a map built backwards.
+      </p>
+      <p>
+        <code>compute_rgbd_odometry(prev, curr)</code> returns the transform that maps points
+        from the <em>previous</em> camera frame into the <em>current</em> one &mdash;
+        <code>T<sub>curr&larr;prev</sub></code>. The camera-to-world pose therefore advances by
+        its <em>inverse</em>. The code composed the raw transform instead:
+      </p>
+    </div>
+
+    <div class="formula">- self.current_pose = self.current_pose @ trans
++ self.current_pose = self.current_pose @ np.linalg.inv(trans)</div>
+
+    <div class="prose stack">
+      <p>
+        Every frame was placed at the mirror image of where the camera actually moved. Walking
+        forward pushed the map backward; the reconstruction did not just drift, it folded in on
+        itself, and the drift it did accumulate was doubled.
+      </p>
+    </div>
+
+    <div class="callout">
+      <p class="eyebrow">Regression test added</p>
+      <p>
+        The mock sensor renders a static world from a camera on a known path, which makes it
+        ground truth. The new test correlates the estimated pose translation against that path
+        on all three axes and requires <code>corr &gt; 0.9</code>. With the fix it measures
+        <strong>+0.997 / +0.998 / +0.996</strong>; with the old composition, the same test
+        measures <strong>&minus;0.997 / &minus;0.998 / &minus;0.996</strong> &mdash; a perfect
+        mirror, which is exactly the signature of the bug.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===================================================== 6 ========== -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">06</span>
+      <h2>Where the ceiling is now</h2>
+    </div>
+
+    <div class="prose stack">
+      <p>
+        49&nbsp;ms against a 33&nbsp;ms sensor period means the pipeline consumes roughly two of
+        every three frames. Half of what remains is the odometry solve and most of the rest is
+        memory traffic preparing the frame. In rough order of payoff:
+      </p>
+
+      <ul class="notes">
+        <li>
+          <strong>Track against the model, not the last frame.</strong> Raycast the existing TSDF
+          at the predicted pose and register the incoming frame against that. Same cost class as
+          today's solve, and it is the difference between drift that grows without bound and
+          drift that stays bounded. The volume is already being maintained.
+        </li>
+        <li>
+          <strong>Precondition the depth map.</strong> A bilateral filter before tracking is
+          cheap and removes the speckle the solver currently spends iterations fitting.
+        </li>
+        <li>
+          <strong>Overlap capture with processing.</strong> Frame <em>N</em>'s SLAM and frame
+          <em>N+1</em>'s capture are independent; running them concurrently would hide most of
+          the 14&nbsp;ms preparation cost behind the USB wait.
+        </li>
+        <li>
+          <strong>Scale the voxel with range.</strong> Section 01 shows the quantisation step
+          crossing the map voxel size around 2&nbsp;m. A voxel that widens with depth would stop
+          storing far-field points at a precision the sensor cannot deliver.
+        </li>
+        <li>
+          <strong>A CUDA build is a drop-in.</strong> The tracker and the fusion path are already
+          on the tensor API, so a GPU-enabled Open3D moves them to the device with a
+          <code>Device("CUDA:0")</code> change and nothing else.
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <span>9 backend tests passing</span>
+    <span>Client map verified bit-identical to server map over 80 streamed frames</span>
+    <span>Measured on CPU, Open3D 0.19, Python 3.11</span>
+  </footer>
+
+</div>

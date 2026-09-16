@@ -1,0 +1,7 @@
+numpy
+open3d
+pytest
+fastapi
+uvicorn
+websockets
+httpx

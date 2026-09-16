@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: -apple-system, BlinkMacSystemFont, "Plus Jakarta Sans", "Geist", "Segoe UI", sans-serif;
+    --font-mono: "Geist Mono", "JetBrains Mono", monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .font-mono-telemetry {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
