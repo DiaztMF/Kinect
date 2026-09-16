@@ -17,6 +17,10 @@ backend/exports/*.ply
 *.dll
 *.exe
 
+# Vendored driver SDK (libfreenect clone + libusb headers, ada nested .git)
+backend/libfreenect_src/
+backend/libusb_include/
+
 # OS / editors
 .DS_Store
 Thumbs.db
