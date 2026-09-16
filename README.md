@@ -19,12 +19,22 @@ Real-time 3D room mapping and spatial surface scanner using Microsoft Kinect v1 
 - Hardware: Microsoft Kinect v1 (Xbox 360 Model 1414) with external 12V AC power adapter and USB 2.0 connection.
 
 ### 1. Hardware Driver Setup
-To enable hardware access on Windows 11 without driver signature blocks:
-1. Plug Kinect into an external 12V power supply (green LED blinks or stays solid).
-2. Open Zadig (`backend/zadig-2.9.exe`).
-3. Click **Options** -> **List All Devices**.
-4. Select **Xbox NUI Camera** (`VID: 045E`, `PID: 02AE`).
-5. Choose target driver **WinUSB (v6.1.7600.16385)** and click **Replace Driver**.
+
+The backend features a **dual-driver architecture** and automatically detects whichever driver stack is active:
+
+- **Option A: Official Microsoft Kinect SDK 1.8 (Recommended)**
+  - Install the official [Kinect for Windows SDK v1.8](https://www.microsoft.com/en-us/download/details.aspx?id=40278).
+  - No driver modifications required. The backend interfaces directly with `Kinect10.dll` via COM.
+  - This allows the Kinect sensor to be shared seamlessly with other native software (e.g. Skanect, Brekel, TouchDesigner).
+  - *Windows 11 note:* If Windows Defender flags the legacy driver (Code 39), temporarily disable *Memory Integrity* or the *Microsoft Vulnerable Driver Blocklist* under Windows Security > Device Security > Core isolation.
+
+- **Option B: WinUSB / libfreenect (Alternative Fallback)**
+  - If you prefer not to install the official SDK or want userspace driver isolation:
+    1. Plug Kinect into power and USB.
+    2. Open Zadig (`backend/zadig-2.9.exe`).
+    3. Under **Options**, check **List All Devices**.
+    4. Select **Xbox NUI Camera** (`045E:02AE`), pick **WinUSB**, and click **Replace Driver**.
+    5. The backend will automatically fall back to `libfreenect.dll`.
 
 ### 2. Backend Installation
 ```powershell
@@ -132,23 +142,26 @@ Dedicated 3D LiDAR scanners and modern depth cameras (like Intel RealSense or Az
 ```
 [Kinect v1 (Model 1414)]
        │
-       ▼ (USB 2.0 Isochronous Stream)
-[libfreenect.dll + WinUSB]
-       │ (Color 640x480 + Registered Depth in mm)
-       ▼
+       ▼ (Hardware Driver Stack)
+┌──────────────────────────────────────┐
+│ Option A: Official Kinect SDK 1.8    │ (Kinect10.dll -> INuiSensor COM)
+│ Option B: libfreenect.dll + WinUSB   │ (Isochronous Userspace USB)
+└──────────────────┬───────────────────┘
+                   │ (Color 640x480 + Registered Depth in mm)
+                   ▼
 [Python Backend: kinect_driver.py]
-       │
-       ▼
+                   │
+                   ▼
 [Open3D SLAM Core: slam_engine.py]
        ├─ Hybrid RGB-D Odometry (Pose tracking T_world)
        ├─ Voxel Downsampling (1.2cm grid)
        ├─ Global Point Cloud Accumulator
        └─ Scalable TSDF Volume (3D surface reconstruction)
-       │
-       ▼ (WebSocket Interleaved Binary ArrayBuffer)
+                   │
+                   ▼ (WebSocket Interleaved Binary ArrayBuffer)
 [FastAPI Server: server.py]
-       │
-       ▼
+                   │
+                   ▼
 [Three.js Frontend: Viewport3D.tsx + SpatialHUD.tsx]
        ├─ Zero-copy BufferAttribute Swap
        ├─ Circular Disc Point Splatting Material
