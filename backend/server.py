@@ -35,17 +35,29 @@ from backend.slam_engine import SLAMEngine
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("server")
 
+# How often the surface is re-extracted and pushed to the viewer, and the
+# floor on how much of the session that work may occupy (1 / N).
+MESH_INTERVAL_S = 2.0
+MESH_DUTY_DIVISOR = 9.0
+
 EXPORTS_DIR = Path(__file__).parent / "exports"
 EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class ScanServerState:
-    def __init__(self, mock: bool = False):
+    def __init__(self, mock: bool = False, tsdf_voxel: float = 0.012):
         self.mock_requested = mock
         self.driver = KinectDriver(mock=mock)
         # Intrinsics follow the active backend: the SDK leaves depth in the IR
         # camera's frame, libfreenect and the mock deliver it in the RGB frame.
-        self.slam = SLAMEngine(voxel_size=0.03, max_depth=3.5, **self.driver.intrinsics)
+        self.slam = SLAMEngine(
+            voxel_size=0.03,
+            max_depth=3.5,
+            tsdf_voxel=tsdf_voxel,
+            # sdf_trunc tracks the voxel; ~4 voxels is the usual working ratio.
+            tsdf_trunc=max(0.012, tsdf_voxel * 4.0),
+            **self.driver.intrinsics,
+        )
         self.is_streaming = False
         self.last_status: Dict[str, Any] = {
             "tracking_ok": True,
@@ -60,7 +72,35 @@ class ScanServerState:
         self.last_status["pose"] = self.slam.current_pose.tolist()
 
 
-def create_app(mock: bool = False) -> FastAPI:
+def _free_ram_gb() -> Optional[float]:
+    """Free physical RAM, or None off Windows. Avoids a psutil dependency."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class MemoryStatus(ctypes.Structure):
+            _fields_ = [("dwLength", wintypes.DWORD), ("dwMemoryLoad", wintypes.DWORD),
+                        ("ullTotalPhys", ctypes.c_ulonglong),
+                        ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+        status = MemoryStatus()
+        status.dwLength = ctypes.sizeof(status)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GlobalMemoryStatusEx.argtypes = [ctypes.POINTER(MemoryStatus)]
+        kernel32.GlobalMemoryStatusEx.restype = wintypes.BOOL
+        if not kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return None
+        return status.ullAvailPhys / 1e9
+    except Exception:
+        return None
+
+
+def create_app(mock: bool = False, tsdf_voxel: float = 0.012) -> FastAPI:
     app = FastAPI(title="Kinect v1 3D Room Scanner API", version="1.0.0")
 
     app.add_middleware(
@@ -71,7 +111,18 @@ def create_app(mock: bool = False) -> FastAPI:
         allow_headers=["*"],
     )
 
-    state = ScanServerState(mock=mock)
+    # A fine voxel that exhausts RAM shows up as the server simply vanishing,
+    # with nothing in the log to explain it. Say so up front instead.
+    free_gb = _free_ram_gb()
+    if tsdf_voxel < 0.010 and free_gb is not None and free_gb < 2.0:
+        logger.warning(
+            "Surface voxel is %.0f mm with only %.1f GB RAM free. Room-scale "
+            "scans at this resolution have been OOM-killed here; pass "
+            "--voxel-mm 12 (or higher) if the server dies mid-scan.",
+            tsdf_voxel * 1000, free_gb,
+        )
+
+    state = ScanServerState(mock=mock, tsdf_voxel=tsdf_voxel)
     app.state.scan = state
 
     @app.get("/api/status")
@@ -83,6 +134,10 @@ def create_app(mock: bool = False) -> FastAPI:
                 "is_real_initialized": curr_state.driver._is_real_initialized,
                 "backend": curr_state.driver.backend,
                 "intrinsics": curr_state.driver.intrinsics,
+            },
+            "surface": {
+                "voxel_mm": round(curr_state.slam.tsdf_voxel * 1000, 1),
+                "revision": curr_state.slam.tsdf_revision,
             },
             "slam": {
                 "tracking_ok": curr_state.last_status.get("tracking_ok", True),
@@ -174,6 +229,56 @@ def create_app(mock: bool = False) -> FastAPI:
 
         # By default, connection is ready but starts streaming on "start" or starts immediately if preferred
         stop_event = asyncio.Event()
+        # The mesh worker and the frame loop both write to this socket, and a
+        # websocket frame cannot be interleaved with another, so serialise them.
+        send_lock = asyncio.Lock()
+        mesh_wanted = asyncio.Event()
+
+        async def send_mesh():
+            slam = curr_state.slam
+            revision = slam.tsdf_revision
+            started = time.time()
+            buf = await asyncio.to_thread(slam.mesh_buffer)
+            elapsed = time.time() - started
+            async with send_lock:
+                await websocket.send_bytes(buf)
+            return revision, elapsed
+
+        async def mesh_worker():
+            """Re-extracts the surface on a timer rather than per frame.
+
+            Marching cubes over the whole volume costs 25-230 ms depending on
+            voxel size, far more than a frame budget, and it takes the TSDF lock
+            while it runs. Extracting only when the volume actually changed
+            keeps a parked scanner from re-meshing an unchanged scene.
+            """
+            sent_revision = -1
+            interval = MESH_INTERVAL_S
+            try:
+                while not stop_event.is_set():
+                    try:
+                        await asyncio.wait_for(mesh_wanted.wait(), timeout=interval)
+                        forced = True
+                    except asyncio.TimeoutError:
+                        forced = False
+                    mesh_wanted.clear()
+
+                    slam = curr_state.slam
+                    if not forced and (not curr_state.is_streaming
+                                       or slam.tsdf_revision == sent_revision):
+                        continue
+                    sent_revision, elapsed = await send_mesh()
+
+                    # Extraction holds the TSDF lock, so while it runs the frame
+                    # loop cannot integrate. Back off proportionally to keep it
+                    # under ~10% of the time: at a fine voxel a single extraction
+                    # can take half a second, and a fixed interval would then
+                    # spend a quarter of the session blocking the scanner.
+                    interval = max(MESH_INTERVAL_S, elapsed * MESH_DUTY_DIVISOR)
+            except (WebSocketDisconnect, asyncio.CancelledError):
+                pass
+            except Exception as e:
+                logger.error("Error in mesh worker: %s", e)
 
         async def control_reader():
             try:
@@ -224,6 +329,13 @@ def create_app(mock: bool = False) -> FastAPI:
                             "requested": requested,
                             "success": True
                         }))
+                    elif cmd == "mesh":
+                        mesh_wanted.set()
+                        await websocket.send_text(json.dumps({
+                            "type": "control_ack",
+                            "cmd": "mesh",
+                            "status": "extracting",
+                        }))
                     elif cmd == "ping":
                         await websocket.send_text(json.dumps({"type": "pong"}))
             except WebSocketDisconnect:
@@ -234,6 +346,7 @@ def create_app(mock: bool = False) -> FastAPI:
                 stop_event.set()
 
         reader_task = asyncio.create_task(control_reader())
+        mesh_task = asyncio.create_task(mesh_worker())
 
         # Stream loop running at targeted 15-20 FPS (~0.05s)
         frame_idx = 0
@@ -277,7 +390,8 @@ def create_app(mock: bool = False) -> FastAPI:
 
                 # 1. Send the incremental point delta (8-byte header + 16 B/vertex)
                 if slam_result["new_points"]:
-                    await websocket.send_bytes(slam_result["binary_buffer"])
+                    async with send_lock:
+                        await websocket.send_bytes(slam_result["binary_buffer"])
 
                 frame_idx += 1
 
@@ -294,7 +408,8 @@ def create_app(mock: bool = False) -> FastAPI:
                         "point_count": slam_result["point_count"],
                         "frame_idx": frame_idx,
                     }
-                    await websocket.send_text(json.dumps(telemetry))
+                    async with send_lock:
+                        await websocket.send_text(json.dumps(telemetry))
 
                 # Yield to the event loop; the frame_seq gate above already
                 # caps throughput at the sensor's own 30 Hz.
@@ -308,10 +423,12 @@ def create_app(mock: bool = False) -> FastAPI:
         finally:
             stop_event.set()
             reader_task.cancel()
-            try:
-                await reader_task
-            except (asyncio.CancelledError, WebSocketDisconnect):
-                pass
+            mesh_task.cancel()
+            for task in (reader_task, mesh_task):
+                try:
+                    await task
+                except (asyncio.CancelledError, WebSocketDisconnect):
+                    pass
             logger.info("WS connection terminated and cleaned up")
 
     return app
@@ -322,9 +439,17 @@ def main():
     parser.add_argument("--mock", action="store_true", help="Force mock Kinect driver mode")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host address to bind")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind")
+    parser.add_argument(
+        "--voxel-mm", type=float, default=12.0,
+        help="Surface voxel size in mm. Finer means more detail and much more "
+             "work in both time and memory: 20mm extracts in 45ms, 12mm in "
+             "120ms, 8mm in ~1.1s, 6mm in 540ms. Below about 5mm the Kinect's "
+             "own depth quantisation dominates. On a machine with little free "
+             "RAM, 8mm and finer can exhaust it.",
+    )
     args = parser.parse_args()
 
-    app = create_app(mock=args.mock)
+    app = create_app(mock=args.mock, tsdf_voxel=args.voxel_mm / 1000.0)
     uvicorn.run(app, host=args.host, port=args.port)
 
 

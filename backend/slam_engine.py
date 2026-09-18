@@ -3,23 +3,37 @@ Open3D RGB-D SLAM pipeline for Kinect v1 (registered depth, 640x480 @ 30 Hz).
 
 Per frame:
   1. Frame-to-frame hybrid (photometric + geometric) odometry via the Open3D
-     *tensor* API, seeded with a constant-velocity motion prior.
+     *tensor* API, on an anti-aliased half-resolution pair whose depth has been
+     smoothed hole-aware, seeded with a motion prior that is dropped when the
+     last estimate sat at the noise floor. Each of those three is there because
+     removing it measurably increases drift on a stationary sensor.
   2. Vectorised numpy unprojection of the (strided) depth map into camera space.
   3. Voxel-hash accumulation into a global map that only ever grows by the
      voxels it has not seen before, so per-frame cost is O(new points) rather
      than O(map size).
-  4. Keyframe-gated TSDF integration for the exportable surface mesh.
-  5. Serialisation of *only the new points* into a packed binary vertex buffer.
+  4. Keyframe-gated TSDF integration, which is what the viewer's shaded surface
+     and the mesh export are both built from.
+  5. Serialisation of *only the new points* into a packed binary vertex buffer,
+     plus a whole-surface mesh message the server pushes on its own timer.
+
+Tracking stays frame-to-frame deliberately: Open3D's frame-to-model tracker was
+measured on the same two ground-truth recordings at 6.5 FPS with *more* drift
+than this pipeline, so the architectural upgrade does not pay off on CPU.
 """
 
 import struct
+import threading
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import open3d as o3d
 import open3d.core as o3c
 
-# Binary stream header modes (see _pack_binary_buffer).
+# Binary stream message kinds. Every frame on the socket starts with this tag.
+MSG_POINTS = 0
+MSG_MESH = 1
+
+# Point-message modes (see _pack_binary_buffer).
 MODE_APPEND = 0
 MODE_REPLACE = 1
 
@@ -50,6 +64,8 @@ class SLAMEngine:
         motion_prior_floor: float = 0.004,
         track_blur_kernel: int = 7,
         track_blur_sigma: float = 2.0,
+        tsdf_voxel: float = 0.012,
+        tsdf_trunc: float = 0.04,
     ):
         self.width = width
         self.height = height
@@ -69,6 +85,16 @@ class SLAMEngine:
         # _smooth_for_tracking. Set the kernel to 0 to disable.
         self.track_blur_kernel = track_blur_kernel
         self.track_blur_sigma = track_blur_sigma
+        # Surface resolution, and the single biggest dial on this pipeline.
+        # Kinect depth quantises to ~3 mm at 1 m and ~26 mm at 3 m, so below
+        # roughly 5 mm the extra voxels resolve noise rather than geometry.
+        # Cost climbs steeply in both time and memory: for the same scene,
+        # 20 mm extracts in 45 ms / 23k verts, 12 mm in 120 ms / 73k, 8 mm in
+        # ~1.1 s / 345k, 6 mm in 540 ms / 386k. The 8 mm default this started
+        # with got the dev server OOM-killed on an 8 GB machine, so the default
+        # is the one that leaves headroom; raise it deliberately.
+        self.tsdf_voxel = tsdf_voxel
+        self.tsdf_trunc = tsdf_trunc
 
         # Legacy intrinsics, used by TSDF integration and PLY export.
         self.intrinsic = o3d.camera.PinholeCameraIntrinsic(
@@ -97,6 +123,9 @@ class SLAMEngine:
         self._motion_prior = np.eye(4, dtype=np.float64)
         self._last_kf_pose = np.eye(4, dtype=np.float64)
         self._frame_counter = 0
+        # Bumped on every TSDF integration, so the mesh worker can skip
+        # re-extracting a surface nothing has changed.
+        self.tsdf_revision = 0
 
         # Global map: sorted voxel keys plus parallel chunk lists of xyz / rgb.
         self._map_keys = np.empty(0, dtype=np.int64)
@@ -104,15 +133,18 @@ class SLAMEngine:
         self._map_rgb: List[np.ndarray] = []
         self._map_count = 0
 
+        # extract_triangle_mesh() reads the volume while integrate() writes it.
+        # The mesh worker runs on its own thread, so without this the two race
+        # inside Open3D's C++ and can hand back a corrupt surface or crash.
+        self._tsdf_lock = threading.Lock()
         self.tsdf_volume = self._new_tsdf()
 
     # ------------------------------------------------------------------ setup
 
-    @staticmethod
-    def _new_tsdf() -> o3d.pipelines.integration.ScalableTSDFVolume:
+    def _new_tsdf(self) -> o3d.pipelines.integration.ScalableTSDFVolume:
         return o3d.pipelines.integration.ScalableTSDFVolume(
-            voxel_length=0.012,
-            sdf_trunc=0.04,
+            voxel_length=self.tsdf_voxel,
+            sdf_trunc=self.tsdf_trunc,
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
         )
 
@@ -123,11 +155,13 @@ class SLAMEngine:
         self._motion_prior = np.eye(4, dtype=np.float64)
         self._last_kf_pose = np.eye(4, dtype=np.float64)
         self._frame_counter = 0
+        self.tsdf_revision = 0
         self._map_keys = np.empty(0, dtype=np.int64)
         self._map_xyz = []
         self._map_rgb = []
         self._map_count = 0
-        self.tsdf_volume = self._new_tsdf()
+        with self._tsdf_lock:
+            self.tsdf_volume = self._new_tsdf()
 
     # ------------------------------------------------------------------ views
 
@@ -149,14 +183,15 @@ class SLAMEngine:
 
     def extract_mesh(self) -> o3d.geometry.TriangleMesh:
         """Marching-cubes surface extraction from the TSDF volume."""
-        mesh = self.tsdf_volume.extract_triangle_mesh()
+        with self._tsdf_lock:
+            mesh = self.tsdf_volume.extract_triangle_mesh()
         mesh.compute_vertex_normals()
         return mesh
 
     def snapshot_buffer(self) -> bytes:
         """Full-map binary buffer, for a client that has just (re)connected."""
         if not self._map_count:
-            return struct.pack("<II", 0, MODE_REPLACE)
+            return struct.pack("<III", MSG_POINTS, 0, MODE_REPLACE)
         return self._pack_binary_buffer(
             np.concatenate(self._map_xyz, axis=0),
             np.concatenate(self._map_rgb, axis=0),
@@ -397,27 +432,74 @@ class SLAMEngine:
                 depth_trunc=self.max_depth,
                 convert_rgb_to_intensity=False,
             )
-            self.tsdf_volume.integrate(
-                rgbd, self.intrinsic, np.linalg.inv(self.current_pose)
-            )
+            with self._tsdf_lock:
+                self.tsdf_volume.integrate(
+                    rgbd, self.intrinsic, np.linalg.inv(self.current_pose)
+                )
             self._last_kf_pose = self.current_pose.copy()
+            self.tsdf_revision += 1
         except Exception:
             pass
 
     # ------------------------------------------------------------ wire format
 
+    def mesh_buffer(self) -> bytes:
+        """Packs the TSDF surface into the streaming mesh format.
+
+        Header (12 bytes):
+          uint32 kind = MSG_MESH
+          uint32 vertex_count
+          uint32 triangle_count
+        Then, in this order so every 4-byte field stays aligned and no padding
+        is needed, letting the client build typed-array views straight onto the
+        received buffer:
+          positions  vertex_count   x 3 x float32
+          indices    triangle_count x 3 x uint32
+          normals    vertex_count   x 3 x int8   (normalised, for shading)
+          colours    vertex_count   x 3 x uint8
+
+        Normals are the reason a mesh reads as a surface rather than a cloud, and
+        int8 is ample for shading -- at float32 they would cost as much as the
+        positions.
+        """
+        mesh = self.extract_mesh()
+        verts = np.asarray(mesh.vertices, dtype=np.float32)
+        tris = np.asarray(mesh.triangles, dtype=np.uint32)
+        nv, nt = len(verts), len(tris)
+        header = struct.pack("<III", MSG_MESH, nv, nt)
+        if nv == 0 or nt == 0:
+            return header
+
+        normals = np.asarray(mesh.vertex_normals, dtype=np.float32)
+        normals = np.clip(normals * 127.0, -127, 127).astype(np.int8)
+
+        if len(mesh.vertex_colors) == nv:
+            colors = (np.asarray(mesh.vertex_colors, dtype=np.float32) * 255.0)
+            colors = colors.clip(0, 255).astype(np.uint8)
+        else:
+            colors = np.full((nv, 3), 200, dtype=np.uint8)
+
+        return b"".join((
+            header,
+            np.ascontiguousarray(verts).tobytes(),
+            np.ascontiguousarray(tris).tobytes(),
+            np.ascontiguousarray(normals).tobytes(),
+            np.ascontiguousarray(colors).tobytes(),
+        ))
+
     @staticmethod
     def _pack_binary_buffer(xyz: np.ndarray, rgb: np.ndarray, mode: int) -> bytes:
         """Packs points into the streaming vertex format.
 
-        Header (8 bytes):
+        Header (12 bytes):
+          uint32 kind = MSG_POINTS
           uint32 point_count
           uint32 mode -- 0 append to the client's map, 1 replace it
         Vertices (16 bytes each):
           3 x float32 XYZ, then 4 x uint8 RGBA (A always 255)
         """
         count = len(xyz)
-        header = struct.pack("<II", count, mode)
+        header = struct.pack("<III", MSG_POINTS, count, mode)
         if count == 0:
             return header
 
