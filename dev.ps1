@@ -14,7 +14,13 @@
 [CmdletBinding()]
 param(
     [switch]$Mock,
-    [int]$Port = 8000
+    [int]$Port = 8000,
+    # Surface detail. Finer costs a lot more in time AND memory: 20mm extracts
+    # in 45ms, 12mm in 120ms, 8mm in ~1.1s. Below ~5mm the sensor's own depth
+    # quantisation dominates, so the extra voxels resolve noise, not geometry.
+    # 8mm once got this server OOM-killed on an 8 GB machine -- check free RAM
+    # before going below 12.
+    [double]$VoxelMm = 12.0
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,7 +73,7 @@ try {
     # Start-Process joins ArgumentList on spaces without quoting, and this
     # repo lives under a path that has one -- so quote the script path here.
     $serverPy = Join-Path $root "backend\server.py"
-    $backendArgs = @("`"$serverPy`"", "--port", "$Port")
+    $backendArgs = @("`"$serverPy`"", "--port", "$Port", "--voxel-mm", "$VoxelMm")
     if ($Mock) { $backendArgs += "--mock" }
 
     # Both share this console, so the driver's "REAL hardware" vs "MOCK mode"
@@ -81,6 +87,7 @@ try {
     Write-Host ""
     Write-Host "  scanner    http://localhost:5173" -ForegroundColor Green
     Write-Host "  api        http://localhost:$Port/api/status" -ForegroundColor DarkGray
+    Write-Host "  surface    $VoxelMm mm voxels" -ForegroundColor DarkGray
     Write-Host "  pids       $($procs.Id -join ', ')" -ForegroundColor DarkGray
     Write-Host "  Ctrl+C to stop both." -ForegroundColor DarkGray
     Write-Host ""
