@@ -59,6 +59,14 @@ _V_RELEASE_FRAME = 10
 _V_MAP_DEPTH_FRAME_TO_COLOR = 13
 _V_ELEVATION_SET = 14
 _V_ELEVATION_GET = 15
+_V_ACCELEROMETER = 33
+
+# Gravity magnitude this unit reports at rest. The Kinect's accelerometer has a
+# scale error (measured 1.068 here, not 1.000); only the direction is used, but
+# the magnitude gates whether a reading is trustworthy -- while the sensor is
+# being moved it measures gravity *plus* linear acceleration, and orientation
+# read from that would be wrong.
+_ACCEL_REST_TOLERANCE = 0.12
 
 # INuiFrameTexture vtable slots.
 _T_BUFFER_LEN = 3
@@ -80,6 +88,10 @@ class _ImageFrame(C.Structure):
         ("dwFrameFlags", W.DWORD),
         ("ViewArea", _ViewArea),
     ]
+
+
+class _Vector4(C.Structure):
+    _fields_ = [("x", C.c_float), ("y", C.c_float), ("z", C.c_float), ("w", C.c_float)]
 
 
 class _LockedRect(C.Structure):
@@ -107,6 +119,7 @@ class KinectSDKSensor:
         self._h_depth = W.HANDLE()
 
         self._latest: Optional[Tuple[np.ndarray, np.ndarray]] = None
+        self._rest_magnitude = 1.0
         self._frame_seq = 0
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -148,6 +161,9 @@ class KinectSDKSensor:
             self._sensor, _V_MAP_DEPTH_FRAME_TO_COLOR, C.c_long,
             C.c_int, C.c_int, W.DWORD, C.POINTER(C.c_ushort), W.DWORD, C.POINTER(C.c_long),
         )
+        self._accelerometer = _vcall(
+            self._sensor, _V_ACCELEROMETER, C.c_long, C.POINTER(_Vector4)
+        )
         self._set_angle = _vcall(self._sensor, _V_ELEVATION_SET, C.c_long, C.c_long)
         self._get_angle = _vcall(self._sensor, _V_ELEVATION_GET, C.c_long, C.POINTER(C.c_long))
 
@@ -169,6 +185,9 @@ class KinectSDKSensor:
             if hr != 0:
                 self.close()
                 raise KinectSDKError(f"NuiImageStreamOpen({typ}) failed (hr=0x{hr & 0xFFFFFFFF:08X})")
+
+        self.calibrate_gravity_magnitude()
+        logger.info("Accelerometer at-rest magnitude: %.3f g", self._rest_magnitude)
 
         self._stop.clear()
         self._thread = threading.Thread(target=self._pump, daemon=True)
@@ -270,6 +289,38 @@ class KinectSDKSensor:
         clamped = max(-27, min(27, int(angle_deg)))
         self._set_angle(self._sensor, clamped)
         return clamped
+
+    def get_gravity(self) -> Optional[np.ndarray]:
+        """Unit gravity vector in camera coordinates, or None if unusable.
+
+        This is the one absolute orientation reference the sensor has: roll and
+        pitch read from it cannot drift, however long the scan runs. Yaw is not
+        observable from gravity.
+
+        Returns None while the sensor is accelerating -- the reading is then
+        gravity plus whatever the hand is doing, and trusting it would inject
+        exactly the error it exists to remove.
+        """
+        v = _Vector4()
+        if self._accelerometer(self._sensor, C.byref(v)) != 0:
+            return None
+        g = np.array([v.x, v.y, v.z], dtype=np.float64)
+        magnitude = np.linalg.norm(g)
+        if magnitude < 1e-6 or abs(magnitude - self._rest_magnitude) > _ACCEL_REST_TOLERANCE:
+            return None
+        return g / magnitude
+
+    def calibrate_gravity_magnitude(self, samples: int = 40) -> float:
+        """Learns this unit's at-rest reading so the motion gate has a baseline."""
+        mags = []
+        for _ in range(samples):
+            v = _Vector4()
+            if self._accelerometer(self._sensor, C.byref(v)) == 0:
+                mags.append(float(np.linalg.norm([v.x, v.y, v.z])))
+            time.sleep(0.01)
+        if mags:
+            self._rest_magnitude = float(np.median(mags))
+        return self._rest_magnitude
 
     def get_tilt(self) -> Optional[int]:
         angle = C.c_long(0)
