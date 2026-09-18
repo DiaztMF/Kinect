@@ -22,6 +22,8 @@ export interface ControlDockProps {
   isExporting?: boolean;
   pointSize: number;
   onPointSizeChange: (size: number) => void;
+  renderMode: "mesh" | "points";
+  onRenderModeChange: (mode: "mesh" | "points") => void;
 }
 
 export function ControlDock({
@@ -35,6 +37,8 @@ export function ControlDock({
   isExporting = false,
   pointSize,
   onPointSizeChange,
+  renderMode,
+  onRenderModeChange,
 }: ControlDockProps) {
   const handleNudge = (delta: number) => {
     const next = Math.max(-27, Math.min(27, currentTiltAngle + delta));
@@ -54,12 +58,38 @@ export function ControlDock({
     return "SOLID";
   };
 
+  const isMesh = renderMode === "mesh";
+
   return (
     <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto select-none">
       {/* Outer Shell: Double-bezel wrapper */}
       <div className="p-1.5 rounded-full bg-zinc-900/60 backdrop-blur-2xl border border-white/10 shadow-2xl">
         {/* Inner Core container */}
         <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-zinc-950/80 border border-white/5 shadow-[inset_0_1px_1px_rgba(255,255,255,0.12)]">
+          {/* 0. Surface / Points view toggle */}
+          <div className="flex items-center rounded-full bg-white/5 border border-white/10 p-0.5">
+            <button
+              onClick={() => onRenderModeChange("mesh")}
+              title="Shaded reconstructed surface"
+              className={`px-3 py-1.5 rounded-full text-[11px] font-semibold tracking-wide transition-colors ${
+                isMesh ? "bg-sky-500/25 text-sky-200" : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              Surface
+            </button>
+            <button
+              onClick={() => onRenderModeChange("points")}
+              title="Raw accumulated point cloud"
+              className={`px-3 py-1.5 rounded-full text-[11px] font-semibold tracking-wide transition-colors ${
+                !isMesh ? "bg-sky-500/25 text-sky-200" : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              Points
+            </button>
+          </div>
+
+          <div className="w-[1px] h-6 bg-white/10" />
+
           {/* 1. Primary Action: Start / Pause Streaming (Button-in-Button Trailing Icon) */}
           <button
             onClick={onToggleStreaming}

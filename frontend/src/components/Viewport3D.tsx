@@ -1,12 +1,17 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { CloudStore, TelemetryData } from "../hooks/usePointBuffer";
+import { CloudStore, MeshStore, TelemetryData } from "../hooks/usePointBuffer";
+
+export type RenderMode = "mesh" | "points";
 
 export interface Viewport3DProps {
   /** Mutable point store written by the WebSocket; polled from the rAF loop. */
   cloud: React.RefObject<CloudStore>;
+  /** Mutable surface store, replaced whole each time the TSDF is re-extracted. */
+  mesh: React.RefObject<MeshStore>;
   telemetry: TelemetryData;
+  renderMode?: RenderMode;
   pointSize?: number;
   className?: string;
 }
@@ -84,7 +89,9 @@ function createFrustumGeometry(fovDeg = 45, aspect = 4 / 3, depth = 0.35): THREE
 
 export function Viewport3D({
   cloud,
+  mesh,
   telemetry,
+  renderMode = "mesh",
   pointSize = 0.045,
   className = "w-full h-full",
 }: Viewport3DProps) {
@@ -97,6 +104,9 @@ export function Viewport3D({
   const controlsRef = useRef<OrbitControls | null>(null);
   const pointsGeometryRef = useRef<THREE.BufferGeometry | null>(null);
   const pointsMaterialRef = useRef<THREE.PointsMaterial | null>(null);
+  const pointCloudRef = useRef<THREE.Points | null>(null);
+  const surfaceRef = useRef<THREE.Mesh | null>(null);
+  const modeRef = useRef<RenderMode>(renderMode);
   const frustumMeshRef = useRef<THREE.LineSegments | null>(null);
   const frustumMaterialRef = useRef<THREE.LineBasicMaterial | null>(null);
 
@@ -136,6 +146,20 @@ export function Viewport3D({
     controls.target.set(0, 0, 1.0);
     controlsRef.current = controls;
 
+    // A surface only reads as a surface when it is lit. Hemisphere light gives
+    // the ambient fill that keeps cavities from going black; the two
+    // directionals rake across it so geometry casts its own shading.
+    const hemi = new THREE.HemisphereLight(0xdfe8ff, 0x1a1a22, 1.15);
+    scene.add(hemi);
+
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    keyLight.position.set(2.5, 4, -2);
+    scene.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(0x93b4ff, 0.45);
+    fillLight.position.set(-3, 1.5, 3);
+    scene.add(fillLight);
+
     // Subtle dark ground grid
     const grid = new THREE.GridHelper(6, 24, 0x27272a, 0x18181b);
     grid.position.y = -0.6;
@@ -162,6 +186,21 @@ export function Viewport3D({
     pointsMaterialRef.current = pointsMaterial;
 
     const pointCloud = new THREE.Points(pointsGeometry, pointsMaterial);
+    pointCloudRef.current = pointCloud;
+
+    // Reconstructed surface. DoubleSide matters: a scan is an open shell, and
+    // from inside a room every triangle faces away from the camera.
+    const surfaceGeometry = new THREE.BufferGeometry();
+    const surfaceMaterial = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.92,
+      metalness: 0.0,
+      side: THREE.DoubleSide,
+      flatShading: false,
+    });
+    const surface = new THREE.Mesh(surfaceGeometry, surfaceMaterial);
+    surface.frustumCulled = false;
+    surfaceRef.current = surface;
     // The attribute arrays are oversized and only partially filled, so a
     // bounding sphere over them would be wrong anyway -- and recomputing one
     // per frame over the whole map is exactly the cost this rewrite removes.
@@ -187,6 +226,7 @@ export function Viewport3D({
     scanContainer.rotation.x = Math.PI;
     scanContainer.scale.set(1, 1, 1);
     scanContainer.add(pointCloud);
+    scanContainer.add(surface);
     scanContainer.add(frustum);
     scene.add(scanContainer);
 
@@ -232,11 +272,42 @@ export function Viewport3D({
       pointsGeometry.setDrawRange(0, store.count);
     };
 
+    // The surface arrives whole, not incrementally, so each revision simply
+    // rebinds the attributes onto the freshly received buffers.
+    let lastMeshRevision = -1;
+    const syncMesh = () => {
+      const store = mesh.current;
+      if (!store || store.revision === lastMeshRevision) return;
+      lastMeshRevision = store.revision;
+
+      if (!store.vertexCount || !store.triangleCount) {
+        surfaceGeometry.setDrawRange(0, 0);
+        return;
+      }
+
+      surfaceGeometry.setAttribute(
+        "position", new THREE.BufferAttribute(store.positions, 3));
+      surfaceGeometry.setAttribute(
+        "normal", new THREE.BufferAttribute(store.normals, 3, true));
+      surfaceGeometry.setAttribute(
+        "color", new THREE.BufferAttribute(store.colors, 3, true));
+      surfaceGeometry.setIndex(new THREE.BufferAttribute(store.indices, 1));
+      surfaceGeometry.setDrawRange(0, store.triangleCount * 3);
+    };
+
+    const applyMode = () => {
+      const isMesh = modeRef.current === "mesh";
+      surface.visible = isMesh;
+      pointCloud.visible = !isMesh;
+    };
+
     // Render loop
     let animId: number;
     const animate = () => {
       animId = requestAnimationFrame(animate);
       syncCloud();
+      syncMesh();
+      applyMode();
       controls.update();
       renderer.render(scene, camera);
     };
@@ -261,6 +332,8 @@ export function Viewport3D({
       renderer.dispose();
       pointsGeometry.dispose();
       pointsMaterial.dispose();
+      surfaceGeometry.dispose();
+      surfaceMaterial.dispose();
       frustumGeo.dispose();
       frustumMat.dispose();
       if (container.contains(renderer.domElement)) {
@@ -269,7 +342,13 @@ export function Viewport3D({
     };
   }, []);
 
-  // 2. Dynamic point size update
+  // 2. Render mode is read from a ref inside the render loop, so flipping it
+  // costs no scene rebuild.
+  useEffect(() => {
+    modeRef.current = renderMode;
+  }, [renderMode]);
+
+  // 2b. Dynamic point size update
   useEffect(() => {
     if (pointsMaterialRef.current && pointSize) {
       pointsMaterialRef.current.size = pointSize;

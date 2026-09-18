@@ -9,6 +9,22 @@ export interface TelemetryData {
 }
 
 /**
+ * Mutable, render-loop-owned mesh storage.
+ *
+ * Views point straight into the received ArrayBuffer -- the wire format orders
+ * its fields so nothing needs copying or realigning.
+ */
+export interface MeshStore {
+  positions: Float32Array;
+  indices: Uint32Array;
+  normals: Int8Array;
+  colors: Uint8Array;
+  vertexCount: number;
+  triangleCount: number;
+  revision: number;
+}
+
+/**
  * Mutable, render-loop-owned point cloud storage.
  *
  * The socket writes straight into these preallocated arrays and bumps the
@@ -33,16 +49,22 @@ export interface UsePointBufferOptions {
 
 export interface UsePointBufferReturn {
   cloud: React.RefObject<CloudStore>;
+  mesh: React.RefObject<MeshStore>;
+  triangleCount: number;
   pointCount: number;
   telemetry: TelemetryData;
   isConnected: boolean;
   sendCommand: (cmd: string, payload?: Record<string, unknown>) => void;
 }
 
-// Wire format, mirrored from backend/slam_engine.py:
-//   header  : uint32 count, uint32 mode
-//   vertices: 3 x float32 xyz, then 4 x uint8 rgba
-const HEADER_BYTES = 8;
+// Wire format, mirrored from backend/slam_engine.py. Every message opens with
+// a uint32 kind tag.
+//   points: kind=0, uint32 count, uint32 mode, then 3 x float32 xyz + 4 x uint8 rgba
+//   mesh:   kind=1, uint32 vertexCount, uint32 triangleCount, then
+//           positions (f32x3), indices (u32x3), normals (i8x3), colours (u8x3)
+const MSG_POINTS = 0;
+const MSG_MESH = 1;
+const HEADER_BYTES = 12;
 const VERTEX_BYTES = 16;
 const MODE_REPLACE = 1;
 
@@ -59,6 +81,18 @@ const INITIAL_TELEMETRY: TelemetryData = {
   pose: DEFAULT_POSE,
   point_count: 0,
 };
+
+function makeMeshStore(): MeshStore {
+  return {
+    positions: new Float32Array(0),
+    indices: new Uint32Array(0),
+    normals: new Int8Array(0),
+    colors: new Uint8Array(0),
+    vertexCount: 0,
+    triangleCount: 0,
+    revision: 0,
+  };
+}
 
 function makeStore(capacity: number): CloudStore {
   return {
@@ -82,9 +116,11 @@ export function usePointBuffer({
 }: UsePointBufferOptions = {}): UsePointBufferReturn {
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [pointCount, setPointCount] = useState<number>(0);
+  const [triangleCount, setTriangleCount] = useState<number>(0);
   const [telemetry, setTelemetry] = useState<TelemetryData>(INITIAL_TELEMETRY);
 
   const cloud = useRef<CloudStore>(makeStore(initialCapacity));
+  const mesh = useRef<MeshStore>(makeMeshStore());
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
 
@@ -120,12 +156,45 @@ export function usePointBuffer({
       return true;
     }
 
+    function applyMesh(buffer: ArrayBuffer) {
+      const [, nv, nt] = new Uint32Array(buffer, 0, 3);
+      const expected = HEADER_BYTES + nv * 12 + nt * 12 + nv * 3 + nv * 3;
+      if (buffer.byteLength < expected) return;
+
+      // Zero-copy views; the layout puts every 4-byte field before the
+      // byte-wide ones precisely so this is possible.
+      let off = HEADER_BYTES;
+      const positions = new Float32Array(buffer, off, nv * 3);
+      off += nv * 12;
+      const indices = new Uint32Array(buffer, off, nt * 3);
+      off += nt * 12;
+      const normals = new Int8Array(buffer, off, nv * 3);
+      off += nv * 3;
+      const colors = new Uint8Array(buffer, off, nv * 3);
+
+      const store = mesh.current;
+      store.positions = positions;
+      store.indices = indices;
+      store.normals = normals;
+      store.colors = colors;
+      store.vertexCount = nv;
+      store.triangleCount = nt;
+      store.revision++;
+      setTriangleCount(nt);
+    }
+
     function applyPacket(buffer: ArrayBuffer) {
       if (buffer.byteLength < HEADER_BYTES) return;
 
-      const header = new Uint32Array(buffer, 0, 2);
-      const count = header[0];
-      const mode = header[1];
+      const header = new Uint32Array(buffer, 0, 3);
+      if (header[0] === MSG_MESH) {
+        applyMesh(buffer);
+        return;
+      }
+      if (header[0] !== MSG_POINTS) return;
+
+      const count = header[1];
+      const mode = header[2];
       if (buffer.byteLength < HEADER_BYTES + count * VERTEX_BYTES) return;
 
       const store = cloud.current;
@@ -165,6 +234,12 @@ export function usePointBuffer({
       store.count = 0;
       store.revision++;
       setPointCount(0);
+
+      const m = mesh.current;
+      m.vertexCount = 0;
+      m.triangleCount = 0;
+      m.revision++;
+      setTriangleCount(0);
     }
 
     function connect() {
@@ -251,5 +326,5 @@ export function usePointBuffer({
     };
   }, [url, autoConnect, maxCapacity]);
 
-  return { cloud, pointCount, telemetry, isConnected, sendCommand };
+  return { cloud, mesh, pointCount, triangleCount, telemetry, isConnected, sendCommand };
 }

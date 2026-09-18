@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { usePointBuffer } from "./hooks/usePointBuffer";
-import { Viewport3D } from "./components/Viewport3D";
+import { Viewport3D, RenderMode } from "./components/Viewport3D";
 import { SpatialHUD } from "./components/SpatialHUD";
 import { ControlDock } from "./components/ControlDock";
 
 export default function App() {
-  const { cloud, pointCount, telemetry, isConnected, sendCommand } =
+  const { cloud, mesh, pointCount, triangleCount, telemetry, isConnected, sendCommand } =
     usePointBuffer({
       url: "ws://localhost:8000/ws/scan",
     });
@@ -15,6 +15,7 @@ export default function App() {
   const [isMockMode, setIsMockMode] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [pointSize, setPointSize] = useState<number>(0.045); // Default to dense LiDAR splatting (0.045)
+  const [renderMode, setRenderMode] = useState<RenderMode>("mesh");
 
   // Poll driver status initially or when connected to check if mock or real hardware
   useEffect(() => {
@@ -125,6 +126,8 @@ export default function App() {
       {/* 3D WebGL Point Cloud & Camera Frustum Canvas */}
       <Viewport3D
         cloud={cloud}
+        mesh={mesh}
+        renderMode={renderMode}
         telemetry={telemetry}
         pointSize={pointSize}
         className="absolute inset-0 z-0 w-full h-full"
@@ -134,6 +137,8 @@ export default function App() {
       <SpatialHUD
         telemetry={telemetry}
         pointCount={pointCount}
+        triangleCount={triangleCount}
+        renderMode={renderMode}
         isConnected={isConnected}
         isMockMode={isMockMode}
       />
@@ -150,6 +155,8 @@ export default function App() {
         isExporting={isExporting}
         pointSize={pointSize}
         onPointSizeChange={setPointSize}
+        renderMode={renderMode}
+        onRenderModeChange={setRenderMode}
       />
 
       {/* Micro Status Watermark */}

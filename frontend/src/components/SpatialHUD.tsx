@@ -4,6 +4,8 @@ import { Circle, Pulse, Cube } from "@phosphor-icons/react";
 export interface SpatialHUDProps {
   telemetry: TelemetryData;
   pointCount: number;
+  triangleCount?: number;
+  renderMode?: "mesh" | "points";
   isConnected: boolean;
   isMockMode?: boolean;
 }
@@ -11,6 +13,8 @@ export interface SpatialHUDProps {
 export function SpatialHUD({
   telemetry,
   pointCount,
+  triangleCount = 0,
+  renderMode = "mesh",
   isConnected,
   isMockMode = false,
 }: SpatialHUDProps) {
@@ -22,7 +26,12 @@ export function SpatialHUD({
 
   const trackingOk = telemetry.tracking_ok;
   const fpsDisplay = typeof telemetry.fps === "number" ? telemetry.fps.toFixed(1) : "0.0";
-  const pointsFormatted = pointCount.toLocaleString();
+  // The counter names whatever is actually on screen, so the number always
+  // matches what the viewer is looking at.
+  const showingMesh = renderMode === "mesh";
+  const countLabel = showingMesh ? "Surface Triangles" : "Active Points";
+  const countValue = (showingMesh ? triangleCount : pointCount).toLocaleString();
+  const countUnit = showingMesh ? "tri" : "pts";
 
   // Status configuration
   let statusText = "DISCONNECTED";
@@ -94,13 +103,13 @@ export function SpatialHUD({
           {/* Active Points */}
           <div className="flex flex-col">
             <span className="text-[9px] font-mono tracking-widest uppercase text-zinc-500">
-              Active Points
+              {countLabel}
             </span>
             <div className="flex items-baseline gap-1">
               <span className="text-xs font-mono-telemetry font-bold text-zinc-100">
-                {pointsFormatted}
+                {countValue}
               </span>
-              <span className="text-[10px] font-mono text-zinc-500">pts</span>
+              <span className="text-[10px] font-mono text-zinc-500">{countUnit}</span>
             </div>
           </div>
 
