@@ -85,23 +85,25 @@ def test_websocket_control_and_streaming(client):
 
         # 4. First binary frame after "start" is the full-map snapshot
         snapshot = ws.receive_bytes()
-        snap_count, snap_mode = struct.unpack("<II", snapshot[:8])
+        snap_kind, snap_count, snap_mode = struct.unpack("<III", snapshot[:12])
+        assert snap_kind == 0  # MSG_POINTS
         assert snap_mode == 1  # MODE_REPLACE
-        assert len(snapshot) == 8 + snap_count * 16
+        assert len(snapshot) == 12 + snap_count * 16
 
         # 5. Subsequent binary frames are incremental deltas
         data = ws.receive_bytes()
         assert isinstance(data, bytes)
-        assert len(data) >= 8
+        assert len(data) >= 12
 
-        point_count, mode = struct.unpack("<II", data[:8])
+        kind, point_count, mode = struct.unpack("<III", data[:12])
+        assert kind == 0  # MSG_POINTS
         assert mode == 0  # MODE_APPEND
         assert point_count > 0
-        expected_len = 8 + point_count * 16
+        expected_len = 12 + point_count * 16
         assert len(data) == expected_len
 
         # Validate vertex structure: (x, y, z float32, r, g, b, a uint8)
-        first_vertex = data[8:24]
+        first_vertex = data[12:28]
         x, y, z = struct.unpack("<fff", first_vertex[:12])
         r, g, b, a = struct.unpack("4B", first_vertex[12:])
         assert isinstance(x, float)
@@ -126,3 +128,35 @@ def test_websocket_control_and_streaming(client):
     status_resp = client.get("/api/status")
     status_data = status_resp.json()
     assert status_data["slam"]["is_streaming"] is False
+
+
+def test_websocket_streams_mesh(client):
+    """The viewer renders a shaded surface, so the socket must deliver a mesh
+    message alongside the point deltas."""
+    import struct
+
+    with client.websocket_connect("/ws/scan") as ws:
+        ws.send_text(json.dumps({"cmd": "start"}))
+        json.loads(ws.receive_text())          # start ack
+        ws.receive_bytes()                     # point snapshot
+
+        # Give the pipeline a frame so the TSDF has something in it.
+        ws.send_text(json.dumps({"cmd": "mesh"}))
+
+        mesh = None
+        for _ in range(60):
+            msg = ws.receive()
+            if msg.get("bytes") is None:
+                continue
+            data = msg["bytes"]
+            kind, a, b = struct.unpack("<III", data[:12])
+            if kind == 1:  # MSG_MESH
+                mesh = (data, a, b)
+                break
+
+        assert mesh is not None, "no mesh message arrived"
+        data, nv, nt = mesh
+        assert len(data) == 12 + nv * 12 + nt * 12 + nv * 3 + nv * 3
+        if nt:
+            idx = struct.unpack_from(f"<{nt * 3}I", data, 12 + nv * 12)
+            assert max(idx) < nv

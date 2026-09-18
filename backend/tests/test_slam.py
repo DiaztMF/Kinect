@@ -62,11 +62,12 @@ def test_slam_engine_continuous_frames():
 
         # Validate binary buffer format: the stream carries only the delta
         buf = res["binary_buffer"]
-        assert len(buf) >= 8
-        delta_count, mode = struct.unpack("<II", buf[:8])
+        assert len(buf) >= 12
+        kind, delta_count, mode = struct.unpack("<III", buf[:12])
+        assert kind == 0  # MSG_POINTS
         assert mode == 0  # MODE_APPEND
         assert delta_count == res["new_points"]
-        assert len(buf) == 8 + delta_count * 16
+        assert len(buf) == 12 + delta_count * 16
 
         if i == 0:
             res1 = res
@@ -100,14 +101,14 @@ def test_slam_voxel_map_dedup():
     # handful of points can cross a voxel boundary -- allow well under 1%.
     again = slam.process_frame(rgb, depth)
     assert again["new_points"] < first["new_points"] * 0.01
-    assert len(again["binary_buffer"]) == 8 + again["new_points"] * 16
+    assert len(again["binary_buffer"]) == 12 + again["new_points"] * 16
 
     # With tracking held fixed, the dedup is exact.
     slam._prev_rgbd_t = None
     third = slam.process_frame(rgb, depth)
     assert third["new_points"] == 0
     assert third["point_count"] == again["point_count"]
-    assert len(third["binary_buffer"]) == 8
+    assert len(third["binary_buffer"]) == 12
 
     keys = slam._map_keys
     assert keys.size == slam.total_points
@@ -136,15 +137,16 @@ def test_snapshot_buffer_is_replace_mode():
     """A reconnecting client gets the whole map flagged as a replacement."""
     driver = KinectDriver(mock=True)
     slam = SLAMEngine(voxel_size=0.03, max_depth=3.5)
-    assert struct.unpack("<II", slam.snapshot_buffer()[:8]) == (0, 1)
+    assert struct.unpack("<III", slam.snapshot_buffer()[:12]) == (0, 0, 1)
 
     rgb, depth = driver.get_frame()
     slam.process_frame(rgb, depth)
     snap = slam.snapshot_buffer()
-    count, mode = struct.unpack("<II", snap[:8])
+    kind, count, mode = struct.unpack("<III", snap[:12])
+    assert kind == 0  # MSG_POINTS
     assert mode == 1  # MODE_REPLACE
     assert count == slam.total_points
-    assert len(snap) == 8 + count * 16
+    assert len(snap) == 12 + count * 16
 
 
 def test_pose_tracks_camera_motion(monkeypatch):
@@ -250,3 +252,60 @@ def test_motion_prior_is_gated_at_the_noise_floor():
     real[0, 3] = slam.motion_prior_floor * 10
     slam._motion_prior = real
     assert np.linalg.norm(slam._motion_prior[:3, 3]) > slam.motion_prior_floor
+
+
+def test_mesh_buffer_layout_is_parseable_without_copies():
+    """The mesh wire format must let the browser build typed-array views
+    directly on the received buffer, so every 4-byte field has to stay aligned:
+    positions and indices first, the byte-wide normals and colours last."""
+    driver = KinectDriver(mock=True)
+    slam = SLAMEngine(voxel_size=0.03, max_depth=3.5)
+    for _ in range(3):
+        rgb, depth = driver.get_frame()
+        slam.process_frame(rgb, depth)
+
+    buf = slam.mesh_buffer()
+    kind, nv, nt = struct.unpack("<III", buf[:12])
+    assert kind == 1  # MSG_MESH
+    assert nv > 0 and nt > 0, "mock scene should produce a surface"
+    assert len(buf) == 12 + nv * 12 + nt * 12 + nv * 3 + nv * 3
+
+    off = 12
+    pos = np.frombuffer(buf, np.float32, count=nv * 3, offset=off).reshape(nv, 3)
+    off += nv * 12
+    idx = np.frombuffer(buf, np.uint32, count=nt * 3, offset=off).reshape(nt, 3)
+    off += nt * 12
+    nrm = np.frombuffer(buf, np.int8, count=nv * 3, offset=off).reshape(nv, 3)
+
+    assert np.all(np.isfinite(pos))
+    assert idx.max() < nv, "triangle indexes a vertex that does not exist"
+    # int8 normals must be a real direction, not all zeros
+    assert np.abs(nrm.astype(np.float32) / 127.0).sum(1).max() > 0.5
+
+
+def test_empty_mesh_buffer_is_header_only():
+    slam = SLAMEngine()
+    buf = slam.mesh_buffer()
+    assert struct.unpack("<III", buf[:12]) == (1, 0, 0)
+    assert len(buf) == 12
+
+
+def test_tsdf_revision_advances_only_on_integration():
+    """The mesh worker skips re-extraction when nothing changed, so the counter
+    has to track actual integrations."""
+    driver = KinectDriver(mock=True)
+    slam = SLAMEngine(voxel_size=0.03, max_depth=3.5)
+    assert slam.tsdf_revision == 0
+
+    rgb, depth = driver.get_frame()
+    slam.process_frame(rgb, depth)
+    assert slam.tsdf_revision == 1, "first frame is always a keyframe"
+
+    # Same frame, pose unchanged -> not a keyframe -> no new integration.
+    slam._prev_rgbd_t = None
+    before = slam.tsdf_revision
+    slam.process_frame(rgb, depth)
+    assert slam.tsdf_revision == before
+
+    slam.reset()
+    assert slam.tsdf_revision == 0
